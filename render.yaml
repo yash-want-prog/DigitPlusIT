@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: handoffiq
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: DB_PATH
+        value: data/app.db
+      - key: LOG_FILE
+        value: logs/app.log
+      - key: LOG_DASHBOARD_TOKEN
+        sync: false

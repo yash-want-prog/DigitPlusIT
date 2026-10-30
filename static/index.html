@@ -1,0 +1,123 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HandoffIQ</title><style>
+:root{--b:#1d4ed8;--bg:#f6f7fb;--c:#fff;--t:#111827;--m:#6b7280}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--c:#1a1d24;--t:#e5e7eb;--m:#9ca3af}}
+body{font:14px system-ui;margin:0;background:var(--bg);color:var(--t)}header{padding:12px 20px;background:var(--b);color:#fff;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+header b{font-size:18px}nav button{background:none;border:0;color:#fff;opacity:.7;font-size:14px;cursor:pointer;padding:6px 10px}nav button.on{opacity:1;border-bottom:2px solid #fff}
+main{max-width:980px;margin:16px auto;padding:0 12px}.card{background:var(--c);border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px #0002}
+input,textarea,select{width:100%;box-sizing:border-box;padding:7px;margin:3px 0 8px;border:1px solid #8884;border-radius:6px;background:var(--c);color:var(--t);font:inherit}
+button.p{background:var(--b);color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer;margin-right:6px}.m{color:var(--m)}
+.r{display:inline-block;min-width:34px;text-align:center;border-radius:12px;padding:2px 8px;color:#fff;font-weight:600}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:6px 0;border-top:1px solid #8883}.g{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#toast{position:fixed;bottom:16px;right:16px;background:#111;color:#fff;padding:10px 14px;border-radius:8px;display:none}pre{white-space:pre-wrap;font:inherit}
+
+.log-head{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px}
+.stat{background:var(--bg);border:1px solid #8883;border-radius:9px;padding:12px}
+.stat strong{display:block;font-size:24px;margin-top:4px}
+.log-tools{display:grid;grid-template-columns:1fr 180px auto;gap:10px;align-items:end}
+.log-table-wrap{overflow:auto}
+.log-table{width:100%;border-collapse:collapse;min-width:780px}
+.log-table th,.log-table td{padding:10px;border-bottom:1px solid #8883;text-align:left;vertical-align:top}
+.log-table th{font-size:12px;color:var(--m);position:sticky;top:0;background:var(--c)}
+.pill{display:inline-block;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:700;background:#64748b22}
+.pill.ERROR{background:#dc262622;color:#dc2626}.pill.WARNING{background:#d9770622;color:#d97706}.pill.INFO{background:#16a34a22;color:#16a34a}
+.log-msg{font-weight:600;max-width:340px;overflow-wrap:anywhere}
+.log-meta{font-size:12px;color:var(--m);margin-top:4px;overflow-wrap:anywhere}
+.log-detail{font:12px ui-monospace,monospace;white-space:pre-wrap;max-width:420px;overflow-wrap:anywhere;color:var(--m)}
+@media(max-width:700px){.stats{grid-template-columns:repeat(2,minmax(120px,1fr))}.log-tools{grid-template-columns:1fr}.g{grid-template-columns:1fr}main{padding:0 8px}}
+</style></head><body>
+<header><b>HandoffIQ</b><nav id="nav"></nav></header><main id="v"></main><div id="toast"></div>
+<script>
+const $=s=>document.querySelector(s),E=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tabs={meetings:'Meetings',radar:'Slip Radar',brief:'Catch-up Brief',kb:'Knowledge Base',logs:'System Logs'};let KB=[],logTimer=null;
+function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';setTimeout(()=>e.style.display='none',3500)}
+async function api(p,m='GET',b){const headers={'content-type':'application/json'};const logToken=localStorage.getItem('handoffiq_logs_token');if(logToken)headers['X-Logs-Token']=logToken;const r=await fetch('/api'+p,{method:m,headers,body:b?JSON.stringify(b):undefined});
+ const d=await r.json().catch(()=>({}));if(!r.ok){const msg=d.detail?(typeof d.detail=='string'?d.detail:d.detail.map(x=>x.loc.slice(-1)+': '+x.msg).join('; ')):d.error||'error';toast('⚠ '+msg);throw Error(msg)}return d}
+const col=n=>n>=60?'#dc2626':n>=30?'#d97706':'#16a34a',csv=s=>s.split(',').map(x=>x.trim()).filter(Boolean);
+function go(t){if(t!=='logs'&&logTimer){clearInterval(logTimer);logTimer=null}$('#nav').innerHTML=Object.entries(tabs).map(([k,v])=>`<button class="${k==t?'on':''}" onclick="go('${k}')">${v}</button>`).join('');({meetings,radar,brief,kb,logs})[t]()}
+async function meetings(){const l=await api('/meetings');KB=await api('/kb');$('#v').innerHTML=`<div class="card"><h3>New meeting / work transfer</h3>
+<div class="g"><div>Title<input id=t></div><div>Type<select id=k><option>meeting<option>handoff</select></div>
+<div>Participants (comma sep.)<input id=p></div><div>Missed it / taking over (get a brief)<input id=a></div></div>
+Agenda<input id=ag>Raw notes (paste chats, notes, transcript — AI structures it)<textarea id=n rows=6></textarea>
+<button class=p onclick="mk()">Create</button></div>`+l.map(m=>`<div class="card" style="cursor:pointer" onclick="open_(${m.id})"><b>${E(m.title)}</b> <span class=m>#${m.id} · ${m.kind}${m.parent_id?' · follows #'+m.parent_id:''} · ${m.open_items} open</span><div class=m>${E(m.summary||'not recapped yet')}</div></div>`).join('')}
+async function mk(){await api('/meetings','POST',{title:$('#t').value,kind:$('#k').value,agenda:$('#ag').value,participants:csv($('#p').value),absent:csv($('#a').value),raw_notes:$('#n').value});toast('Created');meetings()}
+async function open_(id,m){m=m||await api('/meetings/'+id);KB=await api('/kb');const kb=Object.fromEntries(KB.map(k=>[k.id,k.title]));
+$('#v').innerHTML=`<p><a href="#" onclick="go('meetings');return false">← back</a></p><div class=card><h3>${E(m.title)} <span class=m>${m.kind}</span></h3>
+<p>${E(m.summary||'No recap yet.')}</p>${m.decisions.length?'<b>Decisions</b><ul>'+m.decisions.map(d=>`<li>${E(d)}`).join('')+'</ul>':''}
+<button class=p onclick="rc(${id},${m.recapped})">${m.recapped?'Re-run AI recap':'✨ AI recap'}</button><button class=p onclick="cf(${id})">Carry open items forward</button></div>
+<div class=card><h3>Action items</h3>${m.items.map(i=>`<div class=row><span class=r style="background:${col(i.risk)}" title="${E(i.risk_reasons.join(', '))}">${i.risk}</span>
+<div style="flex:1;min-width:200px">${E(i.title)}<div class=m>${i.status=='carried'?'carried forward · ':''}${i.slips?'slipped '+i.slips+'x · ':''}${i.kb.map(k=>'📎 '+E(kb[k])).join(' ')}${i.outcome?' · outcome: '+E(i.outcome):''}</div></div>
+<input style="width:110px" value="${E(i.owner)}" placeholder="owner" onchange="up(${i.id},{owner:this.value},${id})"><input type=date style="width:140px" value="${i.due}" onchange="up(${i.id},{due:this.value},${id})">
+<select style="width:120px" onchange="st(${i.id},this.value,${id})">${['open','in_progress','done','dropped','carried'].map(s=>`<option ${s==i.status?'selected':''}>${s}`).join('')}</select>
+<a href="#" onclick="hi(${i.id});return false">history</a></div>`).join('')||'<span class=m>none</span>'}</div>`}
+async function rc(id,f){const r=await api(`/meetings/${id}/recap${f?'?force=true':''}`,'POST');toast(r.ai_used?'AI recap done':'AI unavailable - used fallback parser');open_(id,r)}
+async function cf(id){const r=await api(`/meetings/${id}/carry-forward`,'POST');toast('Created follow-up #'+r.id);open_(r.id,r)}
+async function up(i,b,m){await api('/items/'+i,'PATCH',b);open_(m)}
+async function st(i,s,m){let o;if(s=='done'||s=='dropped'){o=prompt('Outcome of this item?');if(!o)return open_(m)}try{await api('/items/'+i,'PATCH',{status:s,outcome:o})}catch(e){}open_(m)}
+async function hi(i){const h=await api(`/items/${i}/history`);alert(h.map(x=>`${x.at}  ${x.event}  ${x.detail}`).join('\n'))}
+async function radar(){const l=await api('/radar');$('#v').innerHTML=`<div class=card><h3>Slip Radar</h3><p class=m>Every open item scored 0-100 on how likely it is to silently die (overdue, no owner, repeatedly carried over, no due date).</p>
+${l.map(i=>`<div class=row><span class=r style="background:${col(i.risk)}">${i.risk}</span><div style="flex:1">${E(i.title)}<div class=m>${E(i.meeting)} · ${E(i.owner||'unowned')} · ${E(i.risk_reasons.join(', '))}</div></div></div>`).join('')||'All clear'}</div>
+<div class=card><h3>Work transfer</h3>Reassign all open items from <input id=f style="width:150px;display:inline"> to <input id=to style="width:150px;display:inline"> <button class=p onclick="ht()">Transfer</button></div>`}
+async function ht(){const r=await api('/handoff','POST',{from_person:$('#f').value,to_person:$('#to').value});toast(r.reassigned+' items reassigned');radar()}
+function brief(){$('#v').innerHTML=`<div class=card><h3>Catch-up brief</h3>Person<input id=bp placeholder="e.g. Riddhi"><button class=p onclick="gb()">Generate</button><pre id=bo class=m></pre></div>`}
+async function gb(){$('#bo').textContent='Thinking...';try{const r=await api('/brief','POST',{person:$('#bp').value});$('#bo').textContent=(r.ai_used?'':'[fallback] ')+r.brief}catch(e){$('#bo').textContent=''}}
+async function kb(){const l=await api('/kb');$('#v').innerHTML=`<div class=card><h3>Add document</h3>Title<input id=kt>Tags<input id=kg>Content<textarea id=kc rows=4></textarea><button class=p onclick="ka()">Add</button></div>`+l.map(k=>`<div class=card><b>${E(k.title)}</b> <span class=m>${E(k.tags)}</span><div>${E(k.content)}</div></div>`).join('')}
+async function ka(){await api('/kb','POST',{title:$('#kt').value,tags:$('#kg').value,content:$('#kc').value});kb()}
+
+async function logs(){
+ if(logTimer){clearInterval(logTimer);logTimer=null}
+ $('#v').innerHTML=`<div class="card">
+ <div class="log-head"><div><h2 style="margin:0">System observability</h2><div class="m">Application events, API traffic and Gemini activity from structured backend logs.</div></div>
+ <button class="p" onclick="refreshLogs()">↻ Refresh</button></div>
+ <div class="stats" id="logStats" style="margin-top:14px">
+ ${['Requests','Errors','Warnings','Avg latency'].map(x=>`<div class="stat"><span class="m">${x}</span><strong>—</strong></div>`).join('')}
+ </div>
+ <div class="stats" id="aiStats" style="margin-top:10px">
+ ${['AI calls','AI success','AI failures','Log events'].map(x=>`<div class="stat"><span class="m">${x}</span><strong>—</strong></div>`).join('')}
+ </div></div>
+ <div class="card">
+ <div class="log-head"><h3 style="margin:0">Log explorer</h3><span class="m" id="logUpdated">Waiting for logs…</span></div>
+ <div class="log-tools" style="margin-top:12px">
+ <div>Search<input id="logSearch" placeholder="Search message, request ID, endpoint…" onkeydown="if(event.key==='Enter')refreshLogs()"></div>
+ <div>Severity<select id="logLevel"><option>ALL</option><option>INFO</option><option>WARNING</option><option>ERROR</option></select></div>
+ <div><button class="p" onclick="refreshLogs()">Apply filters</button></div>
+ </div>
+ <div class="m" style="margin:8px 0">Auto-refresh every 15 seconds. Newest events appear first.</div>
+ <div class="log-table-wrap"><table class="log-table"><thead><tr><th>Time / level</th><th>Event</th><th>Request ID</th><th>Details</th></tr></thead><tbody id="logRows"><tr><td colspan="4">Loading logs…</td></tr></tbody></table></div>
+ <div class="m" id="logCount" style="margin-top:10px"></div>
+ </div>
+ <div class="card"><h3>Access protection (optional)</h3><p class="m">If you set LOG_DASHBOARD_TOKEN on your host, paste the same token here. It is stored only in this browser's local storage.</p>
+ <div class="g"><div>Dashboard token<input id="logToken" type="password" placeholder="Leave blank if no token configured"></div><div style="align-self:end"><button class="p" onclick="saveLogToken()">Save token & refresh</button><button class="p" onclick="clearLogToken()">Clear</button></div></div>
+ <div class="m">Log data is read from the server's rotating JSON log file. On ephemeral hosts, use the host's own log viewer for durable operational logs.</div></div>`;
+ const token=localStorage.getItem('handoffiq_logs_token')||'';$('#logToken').value=token;
+ await refreshLogs();
+ logTimer=setInterval(()=>{if(document.querySelector('#logRows'))refreshLogs(true)},15000);
+}
+function saveLogToken(){localStorage.setItem('handoffiq_logs_token',$('#logToken').value);refreshLogs()}
+function clearLogToken(){localStorage.removeItem('handoffiq_logs_token');$('#logToken').value='';refreshLogs()}
+function statCards(el,values){$(el).innerHTML=values.map(([label,value])=>`<div class="stat"><span class="m">${E(label)}</span><strong>${E(value)}</strong></div>`).join('')}
+async function refreshLogs(silent=false){
+ if(!document.querySelector('#logRows'))return;
+ try{
+  const [s,l]=await Promise.all([
+   api('/logs/stats'),
+   api('/logs?limit=200&level='+encodeURIComponent($('#logLevel')?.value||'ALL')+'&search='+encodeURIComponent($('#logSearch')?.value||''))
+  ]);
+  statCards('#logStats',[['Requests',s.requests],['Errors',s.errors],['Warnings',s.warnings],['Avg latency',s.avg_request_latency_ms+' ms']]);
+  statCards('#aiStats',[['Gemini calls',s.ai_calls],['AI success',s.ai_success],['AI failures',s.ai_failed],['Log events',s.total_events]]);
+  $('#logRows').innerHTML=l.items.map(r=>{
+   const details={...r};delete details.ts;delete details.level;delete details.logger;delete details.request_id;delete details.msg;
+   return `<tr><td><div>${E(r.ts||'—')}</div><span class="pill ${E((r.level||'INFO').toUpperCase())}">${E((r.level||'INFO').toUpperCase())}</span><div class="log-meta">${E(r.logger||'')}</div></td>
+   <td><div class="log-msg">${E(r.msg||'')}</div>${r.path?`<div class="log-meta">${E(r.method||'')} ${E(r.path)} · ${E(r.status??'')}</div>`:''}</td>
+   <td><code>${E(r.request_id||'—')}</code></td><td><div class="log-detail">${E(JSON.stringify(details,null,2)==='{}'?'—':JSON.stringify(details,null,2))}</div></td></tr>`
+  }).join('')||'<tr><td colspan="4" class="m">No matching log records found. Trigger an action in HandoffIQ, then refresh.</td></tr>';
+  $('#logCount').textContent=`Showing ${l.count} records · Source: ${l.log_file}`;
+  $('#logUpdated').textContent='Updated '+new Date().toLocaleTimeString();
+ }catch(err){
+  if(!silent&&$('#logRows'))$('#logRows').innerHTML=`<tr><td colspan="4">Could not load logs: ${E(err.message)}. Check whether the server has generated logs or whether a dashboard token is required.</td></tr>`;
+ }
+}
+
+go('meetings')
+</script></body></html>
